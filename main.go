@@ -3,8 +3,11 @@ package main
 import (
 	"database/sql"
 	"encoding/base64"
+	"fmt"
 	"log"
+	"math/rand"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	_ "github.com/lib/pq"
@@ -144,6 +147,23 @@ func main() {
 				}
 
 				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Пароль для указанного ресурса успешно удален."))
+
+			case "generate":
+				var passwordLength int
+				_, err := fmt.Sscanf(update.Message.Text, "generate %d", &passwordLength)
+				if err != nil || passwordLength < 10 || passwordLength > 16 {
+					passwordLength = 12
+				}
+
+				rand.Seed(time.Now().UnixNano())
+				chars := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()")
+				b := make([]rune, passwordLength)
+				for i := range b {
+					b[i] = chars[rand.Intn(len(chars))]
+				}
+				password := string(b)
+
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, password))
 
 			case "get":
 				parts := strings.SplitN(update.Message.Text, " ", 2)
