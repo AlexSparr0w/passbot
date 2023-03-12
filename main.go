@@ -23,7 +23,7 @@ func deleteMessageWithDelay(bot *tgbotapi.BotAPI, chatID int64, messageID int, d
 }
 
 func main() {
-	db, err := sql.Open("postgres", "postgres://bot:password@db:5432/passbot?sslmode=disable")
+	db, err := sql.Open("postgres", "postgres://bot:password@localhost:5432/passbot?sslmode=disable")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -66,8 +66,7 @@ func main() {
 				password := parts[2]
 
 				encodedPassword := base64.StdEncoding.EncodeToString([]byte(password))
-
-				_, err := db.Exec("INSERT INTO passwords (user_id, resource, password) VALUES ($1, $2, $3)", update.Message.From.ID, resource, encodedPassword)
+				_, err := db.Exec("INSERT INTO passwords (user_id, resource, password) VALUES ($1, $2, pgp_sym_encrypt($3, 'my_secret_key'))", update.Message.From.ID, resource, []byte(encodedPassword))
 				if err != nil {
 					log.Panic(err)
 				}
@@ -138,7 +137,7 @@ func main() {
 				newPassword := parts[3]
 
 				var password string
-				err := db.QueryRow("SELECT password FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&password)
+				err := db.QueryRow("SELECT pgp_sym_decrypt(password, 'my_secret_key') FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&password)
 				if err != nil {
 					if err == sql.ErrNoRows {
 						bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Password for the specified resource is not found."))
@@ -163,7 +162,7 @@ func main() {
 				}
 
 				encodedNewPassword := base64.StdEncoding.EncodeToString([]byte(newPassword))
-				_, err = db.Exec("UPDATE passwords SET password = $1 WHERE user_id = $2 AND resource = $3", encodedNewPassword, update.Message.From.ID, resource)
+				_, err = db.Exec("UPDATE passwords SET password = pgp_sym_encrypt($1, 'my_secret_key') WHERE user_id = $2 AND resource = $3", []byte(encodedNewPassword), update.Message.From.ID, resource)
 				if err != nil {
 					log.Panic(err)
 				}
@@ -251,10 +250,9 @@ func main() {
 					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Usage: /get [resource name]. For example, /get google"))
 					continue
 				}
-
 				resource := parts[1]
-				var password string
-				err := db.QueryRow("SELECT password FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&password)
+				var encodedPassword string
+				err := db.QueryRow("SELECT pgp_sym_decrypt(password, 'my_secret_key') FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&encodedPassword)
 				if err != nil {
 					if err == sql.ErrNoRows {
 						bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Password for the specified resource was not found."))
@@ -264,7 +262,7 @@ func main() {
 					continue
 				}
 
-				decodedPassword, err := base64.StdEncoding.DecodeString(password)
+				decodedPassword, err := base64.StdEncoding.DecodeString(encodedPassword)
 				if err != nil {
 					log.Panic(err)
 				}
