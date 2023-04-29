@@ -7,6 +7,7 @@ CREATE TABLE passwords (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL,
   resource TEXT NOT NULL,
+  login TEXT NOT NULL,
   password BYTEA NOT NULL
 );
 

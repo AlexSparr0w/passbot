@@ -23,7 +23,7 @@ func deleteMessageWithDelay(bot *tgbotapi.BotAPI, chatID int64, messageID int, d
 }
 
 func main() {
-	db, err := sql.Open("postgres", "postgres://bot:password@localhost:5432/passbot?sslmode=disable")
+	db, err := sql.Open("postgres", "database_url")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -34,7 +34,7 @@ func main() {
 		log.Panic(err)
 	}
 
-	bot, err := tgbotapi.NewBotAPI("6045450017:AAGLWRnptfEb2BR34FGfa2u-n-RRhcCqEGo")
+	bot, err := tgbotapi.NewBotAPI("bot_token")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -55,27 +55,34 @@ func main() {
 
 		if update.Message.IsCommand() {
 			switch update.Message.Command() {
+			case "start":
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID,
+					"Привет!\nЯ менеджер паролей. Каждый пароль я надежно шифрую и сохраняю\nДоступные команды: /save, /list, /update, /delete, /generate, /get, /help"))
+
 			case "save":
-				parts := strings.SplitN(update.Message.Text, " ", 3)
-				if len(parts) != 3 {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Usage: /save [resource name] [password]. For example, /save google 123456"))
+				parts := strings.SplitN(update.Message.Text, " ", 4)
+				if len(parts) != 4 {
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Использование: /save [resource name] [login] [password]. Для примера, /save google john.doe@gmail.com 123456"))
 					continue
 				}
 
 				resource := parts[1]
-				password := parts[2]
+				login := parts[2]
+				password := parts[3]
 
 				encodedPassword := base64.StdEncoding.EncodeToString([]byte(password))
-				_, err := db.Exec("INSERT INTO passwords (user_id, resource, password) VALUES ($1, $2, pgp_sym_encrypt($3, 'my_secret_key'))", update.Message.From.ID, resource, []byte(encodedPassword))
+				_, err := db.Exec("INSERT INTO passwords (user_id, resource, login, password) VALUES ($1, $2, $3, pgp_sym_encrypt($4, 'sekretkey'))",
+					update.Message.From.ID, resource, login, []byte(encodedPassword))
 				if err != nil {
 					log.Panic(err)
 				}
 
 				// Create the success message and send it
-				successMsg := tgbotapi.NewMessage(update.Message.Chat.ID, "Password saved successfully!")
+				successMsg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пароль сохранен успешно!")
 				msg, err := bot.Send(successMsg)
 				if err != nil {
-					log.Printf("Error sending message: %v", err)
+					log.Printf("Ошибка отправки сообщения: %v", err)
 				} else {
 					// Delete the user's message and the bot's response message after 5 seconds
 					go func() {
@@ -105,15 +112,14 @@ func main() {
 				}
 
 				if len(resources) == 0 {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "You don't have any saved resources."))
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "У вас нету сохраненных данных."))
 					continue
 				}
 
-				// Create the response message and send it
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Your saved resources:\n"+strings.Join(resources, "\n"))
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ваши пароли:\n"+strings.Join(resources, "\n"))
 				response, err := bot.Send(msg)
 				if err != nil {
-					log.Printf("Error sending message: %v", err)
+					log.Printf("Ошибка отправки сообщения: %v", err)
 				} else {
 					// Delete the user's message and the bot's response message after 5 seconds
 					go func() {
@@ -128,7 +134,7 @@ func main() {
 			case "update":
 				parts := strings.SplitN(update.Message.Text, " ", 4)
 				if len(parts) != 4 {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Usage: /update [resource name] [old password] [new password]. For example, /update google 123456 654321"))
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Использование: /update [resource name] [old password] [new password]. Для примера, /update google 123456 654321"))
 					continue
 				}
 
@@ -137,10 +143,10 @@ func main() {
 				newPassword := parts[3]
 
 				var password string
-				err := db.QueryRow("SELECT pgp_sym_decrypt(password, 'my_secret_key') FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&password)
+				err := db.QueryRow("SELECT pgp_sym_decrypt(password, 'sekretkey') FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&password)
 				if err != nil {
 					if err == sql.ErrNoRows {
-						bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Password for the specified resource is not found."))
+						bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Пароль для данного ресурса не найден."))
 					} else {
 						log.Panic(err)
 					}
@@ -157,21 +163,21 @@ func main() {
 				}
 
 				if decodedPasswordStr != oldPassword {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Incorrect old password."))
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Не правильный старый пароль."))
 					continue
 				}
 
 				encodedNewPassword := base64.StdEncoding.EncodeToString([]byte(newPassword))
-				_, err = db.Exec("UPDATE passwords SET password = pgp_sym_encrypt($1, 'my_secret_key') WHERE user_id = $2 AND resource = $3", []byte(encodedNewPassword), update.Message.From.ID, resource)
+				_, err = db.Exec("UPDATE passwords SET password = pgp_sym_encrypt($1, 'sekretkey')WHERE user_id = $2 AND resource = $3", []byte(encodedNewPassword), update.Message.From.ID, resource)
 				if err != nil {
 					log.Panic(err)
 				}
 
 				// Create the response message and send it
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Password for the specified resource has been successfully updated.")
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пароль был успешно обновлен!")
 				response, err := bot.Send(msg)
 				if err != nil {
-					log.Printf("Error sending message: %v", err)
+					log.Printf("Ошибка отправки сообщения: %v", err)
 				} else {
 					// Delete the user's message and the bot's response message after 5 seconds
 					go func() {
@@ -186,7 +192,7 @@ func main() {
 			case "delete":
 				parts := strings.SplitN(update.Message.Text, " ", 2)
 				if len(parts) != 2 {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Usage: /delete [resource name]. For example, /delete google"))
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Использование: /delete [resource name]. Для примера, /delete google"))
 					continue
 				}
 
@@ -198,10 +204,10 @@ func main() {
 				}
 
 				// Create the response message and send it
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Password for the specified resource has been successfully deleted.")
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пароль бы успешно удален!")
 				response, err := bot.Send(msg)
 				if err != nil {
-					log.Printf("Error sending message: %v", err)
+					log.Printf("Ошибка отправки сообщения: %v", err)
 				} else {
 					// Delete the user's message and the bot's response message after 5 seconds
 					go func() {
@@ -232,7 +238,7 @@ func main() {
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, password)
 				response, err := bot.Send(msg)
 				if err != nil {
-					log.Printf("Error sending message: %v", err)
+					log.Printf("Ошибка отправки сообщения: %v", err)
 				} else {
 					// Delete the user's message and the bot's response message after 5 seconds
 					go func() {
@@ -247,15 +253,16 @@ func main() {
 			case "get":
 				parts := strings.SplitN(update.Message.Text, " ", 2)
 				if len(parts) != 2 {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Usage: /get [resource name]. For example, /get google"))
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Использование: /get [resource name]. Для примера, /get google"))
 					continue
 				}
 				resource := parts[1]
 				var encodedPassword string
-				err := db.QueryRow("SELECT pgp_sym_decrypt(password, 'my_secret_key') FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&encodedPassword)
+				var login string
+				err := db.QueryRow("SELECT pgp_sym_decrypt(password, 'sekretkey'), login FROM passwords WHERE user_id = $1 AND resource = $2", update.Message.From.ID, resource).Scan(&encodedPassword, &login)
 				if err != nil {
 					if err == sql.ErrNoRows {
-						bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Password for the specified resource was not found."))
+						bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Пароль для данного ресурса не найден."))
 					} else {
 						log.Panic(err)
 					}
@@ -272,11 +279,11 @@ func main() {
 				}
 
 				// Create the response message and send it
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, decodedPasswordStr)
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("<b>Login:</b> %s\n<b>Password:</b> %s", login, decodedPasswordStr))
 				msg.ParseMode = "HTML"
 				response, err := bot.Send(msg)
 				if err != nil {
-					log.Printf("Error sending message: %v", err)
+					log.Printf("Ошибка отправки сообщения: %v", err)
 				} else {
 					// Delete the user's message and the bot's response message after 5 seconds
 					go func() {
@@ -287,8 +294,10 @@ func main() {
 						bot.Send(deleteBotMsg)
 					}()
 				}
+			case "help":
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Доступания команда: \n/save [resource name] [login] [password]\n/list\n/update [resource name] [old password] [new password]\n/delete [resource name]\n/generate\n/get [resource name]"))
 			case "default":
-				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Unknown command. Available commands: /save, /list, /update, /delete, /generate, /get"))
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Неизвестная команда. Доступания команда: /save, /list, /update, /delete, /generate, /get"))
 			}
 		}
 	}
